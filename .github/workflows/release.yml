@@ -46,9 +46,44 @@ jobs:
       - name: Verify server/contract surfaces match statewave/pyproject.toml
         run: python statewave-docs/tools/check-versions.py
 
+  # Proof figures (test counts, eval assertion/test counts, support-workflow
+  # benchmark score) are hand-mirrored across docs, the core README, and the
+  # marketing site. Unlike package versions they are NOT independent — they
+  # must always agree. The check can't run in a single repo's PR CI because it
+  # reads sibling repos, so it runs here as a release-time gate (same model as
+  # the version check). SSoT + targets live in statewave-docs/tools.
+  verify-proof-figures:
+    name: Verify proof-figure consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out statewave
+        uses: actions/checkout@v6
+        with:
+          path: statewave
+
+      - name: Check out statewave-docs
+        uses: actions/checkout@v6
+        with:
+          repository: smaramwbc/statewave-docs
+          path: statewave-docs
+
+      - name: Check out statewave-web
+        uses: actions/checkout@v6
+        with:
+          repository: smaramwbc/statewave-web
+          path: statewave-web
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Verify proof-figure mirrors match the single source of truth
+        run: python statewave-docs/tools/check-proof-figures.py
+
   release:
     runs-on: ubuntu-latest
-    needs: verify-workspace-versions
+    needs: [verify-workspace-versions, verify-proof-figures]
     permissions:
       contents: write
 
