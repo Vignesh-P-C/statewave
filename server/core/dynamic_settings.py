@@ -1014,12 +1014,47 @@ async def _probe_webhook_url(value: Any) -> ProbeResult:
         return ProbeResult(ok=True, detail="empty url → webhooks disabled")
     if not isinstance(value, str) or not value.startswith(("http://", "https://")):
         return ProbeResult(ok=False, detail="must be http(s)://")
+
+    # Resolve the hostname before connecting — reject private, loopback, link-local,
+    # and reserved addresses to prevent SSRF (e.g. cloud metadata endpoints).
+    import asyncio
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(value)
+    hostname = parsed.hostname
+    if not hostname:
+        return ProbeResult(ok=False, detail="invalid URL: no hostname")
+    try:
+        loop = asyncio.get_event_loop()
+        addr_infos: list = await loop.run_in_executor(
+            None, lambda: socket.getaddrinfo(hostname, None)
+        )
+        for _, _, _, _, sockaddr in addr_infos:
+            ip_str = sockaddr[0]
+            addr = ipaddress.ip_address(ip_str)
+            if (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+            ):
+                return ProbeResult(
+                    ok=False,
+                    detail=f"webhook URL resolves to a non-public address ({ip_str})",
+                )
+    except OSError as exc:
+        return ProbeResult(ok=False, detail=f"hostname resolution failed: {exc}")
+
     try:
         import httpx  # type: ignore[import-not-found]
     except Exception as exc:
         return ProbeResult(ok=False, detail=f"httpx unavailable: {exc}")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        # follow_redirects=False prevents an open-redirect from bypassing the IP check above.
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
             r = await client.head(value)
     except Exception as exc:
         return ProbeResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
