@@ -225,6 +225,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_MODEL",
         category="llm",
         kind="string",
+        hot_reloadable=True,
         tenant_overridable=True,
         description=(
             "LiteLLM model identifier (e.g. `gpt-4o-mini`, "
@@ -237,6 +238,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         category="llm",
         kind="string_or_null",
         is_secret=True,
+        hot_reloadable=True,
         tenant_overridable=True,
         description="API key forwarded to the LLM provider via LiteLLM.",
     ),
@@ -245,6 +247,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_API_BASE",
         category="llm",
         kind="string_or_null",
+        hot_reloadable=True,
         description=(
             "LiteLLM base URL. Set for Azure OpenAI, self-hosted Ollama, "
             "or a LiteLLM proxy."
@@ -256,6 +259,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_TIMEOUT_SECONDS",
         category="llm",
         kind="float",
+        hot_reloadable=True,
         description="LLM request timeout in seconds.",
         min_value=1.0,
         max_value=600.0,
@@ -265,6 +269,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_MAX_RETRIES",
         category="llm",
         kind="int",
+        hot_reloadable=True,
         description="Max retries on transient LLM provider errors.",
         min_value=0,
         max_value=10,
@@ -274,6 +279,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_TEMPERATURE",
         category="llm",
         kind="float",
+        hot_reloadable=True,
         description="Sampling temperature for compile LLM calls.",
         min_value=0.0,
         max_value=2.0,
@@ -283,6 +289,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_COMPILE_MAX_TOKENS",
         category="llm",
         kind="int",
+        hot_reloadable=True,
         description=(
             "Output-token cap for the LLM compiler. Cap, not target — "
             "reasoning models spend hidden tokens, lower values risk "
@@ -296,6 +303,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_COMPILER_TYPE",
         category="llm",
         kind="string",
+        hot_reloadable=True,
         description="Memory compiler: `heuristic` (deterministic) or `llm`.",
         allowed_values=("heuristic", "llm"),
     ),
@@ -318,6 +326,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_LITELLM_EMBEDDING_MODEL",
         category="embeddings",
         kind="string",
+        hot_reloadable=True,
         tenant_overridable=True,
         description="LiteLLM embedding model (e.g. `text-embedding-3-small`).",
     ),
@@ -327,6 +336,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_WEBHOOK_URL",
         category="webhooks",
         kind="string_or_null",
+        hot_reloadable=True,
         tenant_overridable=True,
         description=(
             "Destination URL for outbound webhooks. Empty = webhooks "
@@ -339,6 +349,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_WEBHOOK_TIMEOUT",
         category="webhooks",
         kind="float",
+        hot_reloadable=True,
         description="Webhook delivery timeout in seconds.",
         min_value=0.5,
         max_value=120.0,
@@ -348,6 +359,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_WEBHOOK_EVENTS",
         category="webhooks",
         kind="string",
+        hot_reloadable=True,
         tenant_overridable=True,
         description=(
             "Comma-separated event-type allowlist. Empty = deliver every "
@@ -360,6 +372,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_RATE_LIMIT_RPM",
         category="rate_limits",
         kind="int",
+        hot_reloadable=True,
         tenant_overridable=True,
         description="Requests-per-minute cap. 0 disables rate limiting.",
         min_value=0,
@@ -384,6 +397,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_COMPILE_BATCH_SIZE",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description=(
             "Max episodes per compile-call batch. Higher = fewer batches "
             "but riskier per-call latency."
@@ -396,6 +410,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_COMPILE_MAX_ITERATIONS",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description=(
             "Defensive cap for async compile loops to prevent a "
             "non-advancing compiler from running unbounded."
@@ -408,6 +423,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_COMPILE_JOB_RETENTION_HOURS",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description="Hours to keep finished compile_jobs rows. 0 = forever.",
         min_value=0,
         max_value=8760,
@@ -417,6 +433,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_KIND_TTL_DAYS",
         category="memory",
         kind="json",
+        hot_reloadable=True,
         description=(
             "Per-kind expiry in days, e.g. "
             "`{\"episode_summary\": 30, \"artifact_ref\": 7}`. Missing "
@@ -428,6 +445,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_MEMORY_IMPORT_MAX_BYTES",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description="Hard cap on a single import payload's serialized size.",
         min_value=1,
     ),
@@ -436,6 +454,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_MEMORY_IMPORT_MAX_EPISODES",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description="Per-import episode count cap.",
     ),
     "memory_import_max_memories": SettingSpec(
@@ -443,6 +462,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_MEMORY_IMPORT_MAX_MEMORIES",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description="Per-import memory count cap.",
     ),
     "memory_import_max_subjects": SettingSpec(
@@ -450,6 +470,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_MEMORY_IMPORT_MAX_SUBJECTS",
         category="memory",
         kind="int",
+        hot_reloadable=True,
         description="Per-import subject count cap.",
     ),
     # ─── Labeling ────────────────────────────────────────────────────────
@@ -458,6 +479,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_AUTO_LABELING_ENABLED",
         category="labeling",
         kind="bool",
+        hot_reloadable=True,
         description=(
             "Stamp `suggested_labels` on memories at compile time. Advisory "
             "only — promotion to authoritative labels is a separate "
@@ -469,6 +491,7 @@ CATALOGUE: dict[str, SettingSpec] = {
         env_name="STATEWAVE_AUTO_LABELING_PROVIDER",
         category="labeling",
         kind="string",
+        hot_reloadable=True,
         description="Currently only `heuristic` (regex + Luhn) is supported.",
         allowed_values=("heuristic",),
     ),

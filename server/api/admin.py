@@ -3572,6 +3572,27 @@ async def patch_setting_endpoint(key: str, req: SettingPatchRequest):
     return {"key": key, "value": persisted, "source": "global_db"}
 
 
+@router.post("/settings/apply")
+async def apply_settings_endpoint():
+    """Apply pending hot-reloadable DB overrides to the live process in-place.
+
+    Mutates env_settings for every hot_reloadable=True setting that has a
+    global DB override, then refreshes _applied_values so the pending_restart
+    flag clears on the next snapshot fetch — no orchestrator restart needed.
+
+    Settings that are not hot_reloadable (cors_origins, api_key, embedding
+    singletons, etc.) are intentionally skipped: they still require a full
+    process restart, and their pending_restart flag stays true.
+
+    Returns {applied: N, keys: [...]} confirming which settings were updated.
+    """
+    from server.core.dynamic_settings import apply_hot_reloadable_overrides
+
+    applied = await apply_hot_reloadable_overrides()
+    logger.info("settings_applied_hot_reload", count=len(applied), keys=sorted(applied.keys()))
+    return {"applied": len(applied), "keys": sorted(applied.keys())}
+
+
 @router.delete("/settings/{key}")
 async def delete_setting_endpoint(
     key: str,

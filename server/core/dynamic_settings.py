@@ -962,6 +962,49 @@ async def apply_db_overrides_to_settings() -> dict[str, Any]:
     return applied
 
 
+async def apply_hot_reloadable_overrides() -> dict[str, Any]:
+    """Apply only hot_reloadable=True DB overrides to env_settings in place.
+
+    Unlike ``apply_db_overrides_to_settings`` (run at startup, covers every
+    key), this function intentionally skips non-hot-reloadable keys so that
+    ``_applied_values`` stays accurate: after this call, ``pending_restart``
+    remains True for startup-wired settings (CORS, auth middleware, embedding
+    singletons) and becomes False only for settings the live process actually
+    picks up per-request / per-job.
+
+    Called by ``POST /admin/settings/apply`` so the UI can clear the
+    pending-restart banner without needing an orchestrator restart.
+    """
+    from server.db import engine as engine_module
+
+    _initialise_boot_snapshots()
+
+    applied: dict[str, Any] = {}
+    async with engine_module.get_session_factory()() as session:
+        global_values = await _load_global_overrides(session)
+
+    for key, value in global_values.items():
+        spec = CATALOGUE.get(key)
+        if spec is None or not spec.hot_reloadable or not hasattr(env_settings, key):
+            continue
+        try:
+            object.__setattr__(env_settings, key, value)
+            applied[key] = value
+        except Exception:
+            try:
+                env_settings.__dict__[key] = value
+                applied[key] = value
+            except Exception:
+                continue
+
+    # Update _applied_values only for the keys that were actually applied so
+    # the pending_restart diff stays accurate for startup-wired settings.
+    for key in applied:
+        _applied_values[key] = getattr(env_settings, key, None)
+
+    return applied
+
+
 async def _probe_webhook_url(value: Any) -> ProbeResult:
     """Issue a short HEAD against the URL — we just want to know it
     resolves + responds. 2xx/3xx → ok; 4xx → caller will still send
