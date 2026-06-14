@@ -293,43 +293,51 @@ async def test_pending_restart_set_after_patch_clears_after_simulated_restart(
     `apply_db_overrides_to_settings` simulates a server restart picking
     up the new value; afterwards `pending_restart` must be false even
     though the DB row still exists.
+
+    Uses `strict_schema` (hot_reloadable=False, startup-wired) so the
+    pending_restart path is exercised. hot_reloadable=True settings
+    (e.g. compiler_type) never set pending_restart=True by design.
     """
     from server.core.dynamic_settings import apply_db_overrides_to_settings
 
-    await client.patch("/admin/settings/compiler_type", json={"value": "llm"})
-    snap = (await client.get("/admin/settings/compiler_type")).json()
-    assert snap["value"] == "llm"
+    await client.patch("/admin/settings/strict_schema", json={"value": True})
+    snap = (await client.get("/admin/settings/strict_schema")).json()
+    assert snap["value"] is True
     assert snap["source"] == "global_db"
     assert snap["pending_restart"] is True
-    assert snap["applied_value"] != "llm"
+    assert snap["applied_value"] is not True
 
     # Simulate a process restart — env_settings is re-mutated, applied
     # snapshot is updated.
     await apply_db_overrides_to_settings()
 
-    snap = (await client.get("/admin/settings/compiler_type")).json()
-    assert snap["value"] == "llm"
+    snap = (await client.get("/admin/settings/strict_schema")).json()
+    assert snap["value"] is True
     assert snap["source"] == "global_db"
     assert snap["pending_restart"] is False
-    assert snap["applied_value"] == "llm"
+    assert snap["applied_value"] is True
 
 
 async def test_pending_restart_set_after_delete_without_restart(client: AsyncClient):
     """DELETE returns the row to env-baseline, but the process is still
     running the previously-applied value until restart — that must show
-    as pending_restart."""
+    as pending_restart.
+
+    Uses `strict_schema` (hot_reloadable=False) for the same reason as
+    the patch-then-simulated-restart test above.
+    """
     from server.core.dynamic_settings import apply_db_overrides_to_settings
 
-    await client.patch("/admin/settings/compiler_type", json={"value": "llm"})
+    await client.patch("/admin/settings/strict_schema", json={"value": True})
     await apply_db_overrides_to_settings()  # simulate restart so it's applied
-    await client.delete("/admin/settings/compiler_type")
+    await client.delete("/admin/settings/strict_schema")
 
-    snap = (await client.get("/admin/settings/compiler_type")).json()
+    snap = (await client.get("/admin/settings/strict_schema")).json()
     assert snap["source"] == "env"
     assert snap["pending_restart"] is True
     # applied_value still reflects the post-boot value the process is
     # actually using, not the env baseline.
-    assert snap["applied_value"] == "llm"
+    assert snap["applied_value"] is True
 
 
 async def test_pending_restart_false_for_tenant_override(client: AsyncClient):
