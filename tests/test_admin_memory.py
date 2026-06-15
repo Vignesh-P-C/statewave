@@ -28,6 +28,7 @@ import pytest
 from server.app import create_app
 from server.core.config import settings
 from server.services import memory_packs as mp
+from tests.conftest import iter_routes
 
 
 # ─── Route registration ─────────────────────────────────────────────────────
@@ -46,8 +47,8 @@ from server.services import memory_packs as mp
 )
 def test_memory_endpoints_registered(path, methods):
     app = create_app()
-    for route in app.routes:
-        if getattr(route, "path", None) == path:
+    for route in iter_routes(app):
+        if route.path == path:
             assert methods.issubset(route.methods), (
                 f"{path} expected {methods}, got {route.methods}"
             )
@@ -64,7 +65,7 @@ def test_docs_pack_reseed_alias_is_present_for_back_compat():
     operator scripts keep working without GitHub tokens.
     """
     app = create_app()
-    aliases = [r for r in app.routes if getattr(r, "path", None) == "/admin/docs-pack/reseed"]
+    aliases = [r for r in iter_routes(app) if r.path == "/admin/docs-pack/reseed"]
     assert aliases, "/admin/docs-pack/reseed alias must be registered"
     route = aliases[0]
     assert "POST" in route.methods

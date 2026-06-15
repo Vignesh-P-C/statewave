@@ -25,6 +25,7 @@ import pytest
 
 from server.app import create_app
 from server.services import memory_packs as mp
+from tests.conftest import iter_routes
 
 
 # ─── Route registration ──────────────────────────────────────────────────────
@@ -32,14 +33,14 @@ from server.services import memory_packs as mp
 
 def test_clone_route_registered():
     app = create_app()
-    routes = [getattr(r, "path", None) for r in app.routes]
-    assert "/admin/memory/clone" in routes
+    paths = [r.path for r in iter_routes(app)]
+    assert "/admin/memory/clone" in paths
 
 
 def test_clone_route_is_post_only():
     app = create_app()
-    for route in app.routes:
-        if getattr(route, "path", None) == "/admin/memory/clone":
+    for route in iter_routes(app):
+        if route.path == "/admin/memory/clone":
             assert "POST" in route.methods
             assert "GET" not in route.methods
             return

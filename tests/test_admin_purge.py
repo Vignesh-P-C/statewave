@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 
 from server.services import webhooks as webhooks_service
 from server.services import compile_jobs_durable as jobs_service
+from tests.conftest import iter_routes
 
 
 # ─── Service-layer validation (mocked DB) ────────────────────────────────────
@@ -112,8 +113,8 @@ def _methods_for_path(path: str) -> set[str]:
     from server.app import app
 
     methods: set[str] = set()
-    for route in app.routes:
-        if hasattr(route, "path") and route.path == path:
+    for route in iter_routes(app):
+        if route.path == path:
             methods.update(route.methods)
     return methods
 
