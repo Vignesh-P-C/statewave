@@ -14,16 +14,20 @@ from server.app import create_app
 def iter_routes(app_or_router) -> Generator[BaseRoute, None, None]:
     """Recursively yield all leaf routes, handling _IncludedRouter wrappers.
 
-    Newer Starlette versions store included routers as opaque wrapper objects
-    in app.routes rather than flattening APIRoute entries directly.  Traversing
-    recursively via `.routes` reaches the real APIRoute objects regardless of
-    the Starlette version in use.
+    Starlette ≥1.3 stores included routers as _IncludedRouter objects with an
+    `original_router` attribute rather than flattening APIRoute entries into
+    app.routes directly.  Older versions flatten them.  This walker handles
+    both shapes so route-registration tests stay version-agnostic.
     """
     for route in getattr(app_or_router, "routes", []):
         if hasattr(route, "path") and isinstance(route.path, str):
             yield route
+        # Starlette <1.3: sub-routers expose their routes via .routes
         if hasattr(route, "routes"):
             yield from iter_routes(route)
+        # Starlette ≥1.3: _IncludedRouter wraps the original APIRouter
+        if hasattr(route, "original_router"):
+            yield from iter_routes(route.original_router)
 
 @pytest.fixture(autouse=True)
 def _no_api_key_in_tests(monkeypatch):
