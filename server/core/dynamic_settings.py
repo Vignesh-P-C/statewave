@@ -1015,17 +1015,22 @@ async def _probe_webhook_url(value: Any) -> ProbeResult:
     if not isinstance(value, str) or not value.startswith(("http://", "https://")):
         return ProbeResult(ok=False, detail="must be http(s)://")
 
-    # Resolve the hostname before connecting — reject private, loopback, link-local,
-    # and reserved addresses to prevent SSRF (e.g. cloud metadata endpoints).
     import asyncio
     import ipaddress
     import socket
+    import ssl as ssl_module
     from urllib.parse import urlparse
 
     parsed = urlparse(value)
     hostname = parsed.hostname
     if not hostname:
         return ProbeResult(ok=False, detail="invalid URL: no hostname")
+
+    # Resolve hostname and validate every returned address before connecting.
+    # We pin the connection to the first validated IP (validated_ip) so the
+    # TCP connect never re-invokes DNS — this closes the TOCTOU window that
+    # a DNS-rebinding attack would exploit to bypass the check below.
+    validated_ip: str | None = None
     try:
         loop = asyncio.get_event_loop()
         addr_infos: list = await loop.run_in_executor(
@@ -1045,23 +1050,60 @@ async def _probe_webhook_url(value: Any) -> ProbeResult:
                     ok=False,
                     detail=f"webhook URL resolves to a non-public address ({ip_str})",
                 )
+            if validated_ip is None:
+                validated_ip = ip_str
     except OSError as exc:
         return ProbeResult(ok=False, detail=f"hostname resolution failed: {exc}")
 
+    if validated_ip is None:
+        return ProbeResult(ok=False, detail="hostname resolved to no addresses")
+
+    # Connect directly to the pre-validated IP — no further DNS lookup.
+    # For HTTPS, supply the original hostname as server_name so that TLS
+    # SNI and certificate verification use the correct name.
+    use_tls = parsed.scheme == "https"
+    port = parsed.port or (443 if use_tls else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += f"?{parsed.query}"
+    host_header = parsed.netloc  # includes port if non-default
+
+    ssl_ctx: ssl_module.SSLContext | None = None
+    if use_tls:
+        ssl_ctx = ssl_module.create_default_context()
+
     try:
-        import httpx  # type: ignore[import-not-found]
-    except Exception as exc:
-        return ProbeResult(ok=False, detail=f"httpx unavailable: {exc}")
-    try:
-        # follow_redirects=False prevents an open-redirect from bypassing the IP check above.
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
-            r = await client.head(value)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                validated_ip,
+                port,
+                ssl=ssl_ctx,
+                server_hostname=hostname if use_tls else None,
+            ),
+            timeout=5.0,
+        )
+        try:
+            writer.write(
+                f"HEAD {path} HTTP/1.0\r\nHost: {host_header}\r\nConnection: close\r\n\r\n".encode()
+            )
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readline(), timeout=5.0)
+            response_line = raw.decode("ascii", errors="replace").strip()
+            parts = response_line.split(" ", 2)
+            status_code = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+        finally:
+            writer.close()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+            except Exception:
+                pass
     except Exception as exc:
         return ProbeResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
-    if r.status_code >= 500:
-        return ProbeResult(ok=False, detail=f"endpoint returned {r.status_code}", extra={"status": r.status_code})
+
+    if status_code >= 500:
+        return ProbeResult(ok=False, detail=f"endpoint returned {status_code}", extra={"status": status_code})
     return ProbeResult(
         ok=True,
-        detail=f"endpoint reachable (HEAD → {r.status_code})",
-        extra={"status": r.status_code},
+        detail=f"endpoint reachable (HEAD → {status_code})",
+        extra={"status": status_code},
     )
