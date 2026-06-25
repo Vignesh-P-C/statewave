@@ -75,7 +75,7 @@ This policy applies to all Statewave repositories:
 - `statewave-web` - Marketing site + embedded demo
 - `statewave-admin` - Admin dashboard
 - `statewave-connectors` - Connector ecosystem (`@statewavedev/connectors-*` on npm)
-- `statewave-bench` - Benchmark tooling
+- `statewave-memory-benchmarks` - Benchmark tooling (https://github.com/smaramwbc/statewave-memory-benchmarks)
 
 ## Contact
 

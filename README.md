@@ -96,6 +96,22 @@ Plus the minimal quickstart, docs-grounded support, eval suite (56 assertions ac
 
 ## Run the server
 
+Fastest — one line to a running server:
+
+```bash
+# macOS / Linux
+npx @statewavedev/statewave
+# or
+curl -fsSL https://www.statewave.ai/install | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://www.statewave.ai/install.ps1 | iex
+```
+
+Prefer to run it yourself?
+
 ```bash
 git clone https://github.com/smaramwbc/statewave && cd statewave
 docker compose up -d
