@@ -172,17 +172,6 @@ async def _episode_count(client: httpx.AsyncClient, url: str, subject_id: str) -
     return len(resp.json().get("episodes", []))
 
 
-async def _memory_count(client: httpx.AsyncClient, url: str, subject_id: str) -> int:
-    """Compiled-memory count for a subject, via the subjects listing."""
-    resp = await client.get(f"{url}/v1/subjects")
-    if resp.status_code != 200:
-        return 0
-    for s in resp.json().get("subjects", []):
-        if s.get("subject_id") == subject_id:
-            return int(s.get("memory_count", 0) or 0)
-    return 0
-
-
 async def _purge(client: httpx.AsyncClient, url: str, subject_id: str) -> None:
     resp = await _request_with_retry(
         f"purge {subject_id}",
@@ -222,12 +211,15 @@ async def _ingest_batched(
     return total
 
 
-async def _compile_async(client: httpx.AsyncClient, url: str, subject_id: str) -> None:
-    """Start an async compile and poll the job to completion.
+async def _compile_async(client: httpx.AsyncClient, url: str, subject_id: str) -> dict:
+    """Start an async compile, poll the job to completion, return its result.
 
     Replaces the single long synchronous compile (which an edge proxy
     idle-times-out → 502 on a multi-minute rebuild) with a quick start
-    request plus cheap status polls.
+    request plus cheap status polls. Returns the terminal job payload —
+    its ``memories_created`` is the authoritative compile count. The
+    per-subject ``memory_count`` in /v1/subjects is eventually-consistent
+    and lags right after a large compile, so never gate on it here.
     """
     resp = await _request_with_retry(
         "compile-start",
@@ -244,7 +236,7 @@ async def _compile_async(client: httpx.AsyncClient, url: str, subject_id: str) -
     if not job_id:
         # Older server without async support returned an inline result —
         # the work is already done synchronously.
-        return
+        return job
 
     waited = 0.0
     while waited < _COMPILE_MAX_WAIT_S:
@@ -263,7 +255,7 @@ async def _compile_async(client: httpx.AsyncClient, url: str, subject_id: str) -
             )
             sys.exit(1)
         if status not in _COMPILE_PENDING_STATUSES:
-            return  # any non-pending, non-failed status is terminal success
+            return jr.json()  # terminal success — payload carries memories_created
     print(
         f"  ERROR compile job {job_id} did not finish within "
         f"{_COMPILE_MAX_WAIT_S:.0f}s",
@@ -360,9 +352,8 @@ async def run(docs_path: Path, purge: bool, dry_run: bool) -> None:
         print(f"Ingesting {len(sections)} episodes (batches of {BATCH_SIZE})...")
         await _ingest_batched(client, server_url, sections, STAGING_SUBJECT_ID)
         print("Compiling memories (async)...")
-        await _compile_async(client, server_url, STAGING_SUBJECT_ID)
-
-        staging_mem = await _memory_count(client, server_url, STAGING_SUBJECT_ID)
+        compile_result = await _compile_async(client, server_url, STAGING_SUBJECT_ID)
+        staging_mem = int(compile_result.get("memories_created", 0) or 0)
         print(f"  ✓ staging compiled {staging_mem} memories from {len(sections)} episodes")
 
         # 2. Verify staging BEFORE touching live. A zero-memory or failed
@@ -384,20 +375,20 @@ async def run(docs_path: Path, purge: bool, dry_run: bool) -> None:
         document = await _export(client, server_url, STAGING_SUBJECT_ID)
         await _purge(client, server_url, SUBJECT_ID)
         result = await _import_into(client, server_url, document, SUBJECT_ID)
-        imported = result.get("memories_imported", 0)
+        imported = int(result.get("memories_imported", 0) or 0)
         print(f"  ✓ swapped {imported} memories into {SUBJECT_ID}")
 
-        # 4. Verify live, then drop staging.
-        live_mem = await _memory_count(client, server_url, SUBJECT_ID)
+        # 4. Drop staging. The import result is the authoritative count of what
+        #    landed in live (no eventual-consistency lag to race).
         await _purge(client, server_url, STAGING_SUBJECT_ID)
-        if live_mem == 0:
+        if imported == 0:
             print(
                 f"\nERROR: live subject {SUBJECT_ID!r} has 0 memories after swap.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    print(f"\nDone. The default support docs pack is ready ({live_mem} memories).")
+    print(f"\nDone. The default support docs pack is ready ({imported} memories).")
     print(f"Try: POST {server_url}/v1/context  with subject_id={SUBJECT_ID!r}")
 
 
