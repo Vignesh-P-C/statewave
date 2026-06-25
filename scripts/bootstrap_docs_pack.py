@@ -1,9 +1,9 @@
 """Bootstrap the default Statewave support docs memory pack.
 
 Reads the curated `statewave-docs` corpus, ingests each section as an
-episode under subject `statewave-support-docs`, then compiles. The
-result is a docs-grounded knowledge base that a Statewave-powered
-support agent can query via `POST /v1/context`.
+episode, compiles, and publishes the result under subject
+`statewave-support-docs`. The result is a docs-grounded knowledge base
+that a Statewave-powered support agent can query via `POST /v1/context`.
 
 Usage:
     python -m scripts.bootstrap_docs_pack [--docs-path PATH] [--purge] [--dry-run]
@@ -13,10 +13,22 @@ Env:
     STATEWAVE_API_KEY   (optional)
     STATEWAVE_DOCS_PATH (overrides --docs-path)
 
-Idempotency: by default, fails if the subject already has episodes.
-Re-run with --purge to wipe and rebuild from scratch. Each episode
-carries a content_hash in provenance so future incremental refresh
-flows can diff section-by-section.
+Build-then-swap (why this never empties production):
+    The pack is built into a *staging* subject (`<subject>-staging`) and
+    compiled there first. Only after the staging build is verified to hold
+    memories is it swapped into the live subject via export/import — the
+    live pack is replaced by validated data in one fast step (no compile in
+    the critical window). A slow, flaky, or zero-memory rebuild therefore
+    leaves the live pack untouched instead of purged-empty.
+
+Async compile (why it no longer times out):
+    Compile is kicked off with `async:true` (returns a job id immediately)
+    and polled to completion, instead of one long synchronous request that
+    an edge proxy idle-times-out (502) on a multi-minute pack rebuild.
+
+Idempotency: by default, fails if the LIVE subject already has episodes.
+Re-run with --purge to replace it. Each episode carries a content_hash in
+provenance so future incremental refresh flows can diff section-by-section.
 """
 
 from __future__ import annotations
@@ -45,6 +57,17 @@ DEFAULT_DOCS_PATH = Path(__file__).resolve().parent.parent.parent / "statewave-d
 BATCH_SIZE = 50
 SOURCE = "statewave-docs"
 EPISODE_TYPE = "doc_section"
+STAGING_SUBJECT_ID = f"{SUBJECT_ID}-staging"
+
+# Async-compile job polling. The server drains the whole subject in the
+# background; each poll is a cheap status read, so the long-request idle
+# timeout that 502'd the old synchronous compile can no longer occur.
+_COMPILE_POLL_INTERVAL_S = 5.0
+_COMPILE_MAX_WAIT_S = 1500.0  # 25 min ceiling for a full pack rebuild
+_COMPILE_PENDING_STATUSES = frozenset(
+    {"pending", "queued", "running", "processing", "in_progress", "started"}
+)
+_COMPILE_FAILED_STATUSES = frozenset({"failed", "error", "cancelled", "canceled"})
 
 # HTTP statuses that warrant retry. Standard transient-failure shapes
 # emitted by any reverse proxy / load balancer in front of an HTTP
@@ -76,25 +99,21 @@ async def _request_with_retry(
     hung socket that times out. The most common trigger is a rolling
     server deployment landing on the in-flight request, but the same
     handling covers any transient network blip — without retry, the
-    docs refresh sys.exits on the first hiccup and silently leaves the
-    support pack in a broken half-state until manual rerun.
+    docs refresh sys.exits on the first hiccup.
 
     Idempotency assumptions for the call sites that use this helper:
       - DELETE /v1/subjects/{id} is idempotent (404-on-missing accepted
         as success by `_purge`).
       - POST /v1/episodes/batch may produce duplicates if a prior call
-        partially committed but the response was lost mid-flight; the
-        downstream compile pass tolerates duplicate episodes gracefully
-        and the workflow's verify-step only checks "episodes > 0".
-      - POST /v1/memories/compile only processes uncompiled episodes,
-        so a retry naturally resumes from where the killed call left
-        off without re-doing work.
+        partially committed but the response was lost mid-flight; only
+        staging is ingested into, and staging is purged before each run.
+      - POST /v1/memories/compile (async) is idempotent: it only queues
+        uncompiled episodes, so a retried start resumes cleanly.
 
     Backoff: 2 → 4 → 8 → 16 → 30 → 30 seconds across 5 retries (~90s
     total wall-clock). Tuned to comfortably cover a typical rolling
     deployment cycle on any platform (Fly, Render, Railway, k8s, ECS,
-    etc. — usually 30–90s for a single machine to be replaced and the
-    new one to start serving).
+    etc. — usually 30–90s for a single machine to be replaced).
     """
     delay = initial_delay_s
     for attempt in range(1, attempts + 1):
@@ -125,9 +144,9 @@ async def _request_with_retry(
     raise RuntimeError(f"{op}: retry loop exited without result")
 
 
-def _section_to_episode(section: DocSection) -> dict:
+def _section_to_episode(section: DocSection, subject_id: str) -> dict:
     return {
-        "subject_id": SUBJECT_ID,
+        "subject_id": subject_id,
         "source": SOURCE,
         "type": EPISODE_TYPE,
         "payload": section.to_episode_payload(),
@@ -145,22 +164,33 @@ async def _health_check(client: httpx.AsyncClient, url: str) -> None:
         sys.exit(1)
 
 
-async def _existing_episode_count(client: httpx.AsyncClient, url: str) -> int:
-    """Best-effort check via the timeline endpoint."""
-    resp = await client.get(f"{url}/v1/timeline", params={"subject_id": SUBJECT_ID})
+async def _episode_count(client: httpx.AsyncClient, url: str, subject_id: str) -> int:
+    """Best-effort episode count via the timeline endpoint."""
+    resp = await client.get(f"{url}/v1/timeline", params={"subject_id": subject_id})
     if resp.status_code != 200:
         return 0
     return len(resp.json().get("episodes", []))
 
 
-async def _purge(client: httpx.AsyncClient, url: str) -> None:
+async def _memory_count(client: httpx.AsyncClient, url: str, subject_id: str) -> int:
+    """Compiled-memory count for a subject, via the subjects listing."""
+    resp = await client.get(f"{url}/v1/subjects")
+    if resp.status_code != 200:
+        return 0
+    for s in resp.json().get("subjects", []):
+        if s.get("subject_id") == subject_id:
+            return int(s.get("memory_count", 0) or 0)
+    return 0
+
+
+async def _purge(client: httpx.AsyncClient, url: str, subject_id: str) -> None:
     resp = await _request_with_retry(
-        "purge",
-        lambda: client.delete(f"{url}/v1/subjects/{SUBJECT_ID}"),
+        f"purge {subject_id}",
+        lambda: client.delete(f"{url}/v1/subjects/{subject_id}"),
     )
     if resp.status_code not in (200, 204, 404):
         print(
-            f"  WARN: subject delete returned {resp.status_code}: {resp.text}",
+            f"  WARN: delete {subject_id} returned {resp.status_code}: {resp.text}",
             file=sys.stderr,
         )
 
@@ -169,12 +199,13 @@ async def _ingest_batched(
     client: httpx.AsyncClient,
     url: str,
     sections: list[DocSection],
+    subject_id: str,
     batch_size: int = BATCH_SIZE,
 ) -> int:
     total = 0
     for i in range(0, len(sections), batch_size):
         batch = sections[i : i + batch_size]
-        body = {"episodes": [_section_to_episode(s) for s in batch]}
+        body = {"episodes": [_section_to_episode(s, subject_id) for s in batch]}
         resp = await _request_with_retry(
             f"ingest batch {i}-{i+len(batch)}",
             lambda body=body: client.post(f"{url}/v1/episodes/batch", json=body),
@@ -191,23 +222,84 @@ async def _ingest_batched(
     return total
 
 
-async def _compile(client: httpx.AsyncClient, url: str) -> dict:
-    # Compile is synchronous server-side: it walks every uncompiled episode
-    # under the subject and (in LLM mode) runs the compiler against each
-    # section. ~1-2s per section * 200+ sections puts the call well past the
-    # client default's 120s — bumped to 600s so a full pack rebuild completes
-    # even on the first run after a purge. The fly platform's request idle
-    # timeout sits comfortably above this.
+async def _compile_async(client: httpx.AsyncClient, url: str, subject_id: str) -> None:
+    """Start an async compile and poll the job to completion.
+
+    Replaces the single long synchronous compile (which an edge proxy
+    idle-times-out → 502 on a multi-minute rebuild) with a quick start
+    request plus cheap status polls.
+    """
     resp = await _request_with_retry(
-        "compile",
+        "compile-start",
         lambda: client.post(
             f"{url}/v1/memories/compile",
-            json={"subject_id": SUBJECT_ID},
-            timeout=600.0,
+            json={"subject_id": subject_id, "async": True},
         ),
     )
+    if resp.status_code not in (200, 201, 202):
+        print(f"  ERROR compile-start: {resp.status_code} {resp.text}", file=sys.stderr)
+        sys.exit(1)
+    job = resp.json()
+    job_id = job.get("job_id")
+    if not job_id:
+        # Older server without async support returned an inline result —
+        # the work is already done synchronously.
+        return
+
+    waited = 0.0
+    while waited < _COMPILE_MAX_WAIT_S:
+        await asyncio.sleep(_COMPILE_POLL_INTERVAL_S)
+        waited += _COMPILE_POLL_INTERVAL_S
+        jr = await _request_with_retry(
+            "compile-poll",
+            lambda: client.get(f"{url}/v1/memories/compile/{job_id}"),
+        )
+        status = str(jr.json().get("status", "")).lower()
+        if status in _COMPILE_FAILED_STATUSES:
+            print(
+                f"  ERROR compile job {job_id} ended in status {status!r}: "
+                f"{jr.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if status not in _COMPILE_PENDING_STATUSES:
+            return  # any non-pending, non-failed status is terminal success
+    print(
+        f"  ERROR compile job {job_id} did not finish within "
+        f"{_COMPILE_MAX_WAIT_S:.0f}s",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+async def _export(client: httpx.AsyncClient, url: str, subject_id: str) -> dict:
+    resp = await _request_with_retry(
+        f"export {subject_id}",
+        lambda: client.get(f"{url}/admin/export/{subject_id}"),
+    )
+    if resp.status_code != 200:
+        print(f"  ERROR export {subject_id}: {resp.status_code} {resp.text}", file=sys.stderr)
+        sys.exit(1)
+    return resp.json()
+
+
+async def _import_into(
+    client: httpx.AsyncClient, url: str, document: dict, target_subject_id: str
+) -> dict:
+    body = {
+        "document": document,
+        "target_subject_id": target_subject_id,
+        "preserve_ids": False,
+    }
+    resp = await _request_with_retry(
+        f"import -> {target_subject_id}",
+        lambda: client.post(f"{url}/admin/import", json=body),
+    )
     if resp.status_code not in (200, 201):
-        print(f"  ERROR compile: {resp.status_code} {resp.text}", file=sys.stderr)
+        print(
+            f"  ERROR import -> {target_subject_id}: {resp.status_code} {resp.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return resp.json()
 
@@ -217,7 +309,7 @@ async def run(docs_path: Path, purge: bool, dry_run: bool) -> None:
     api_key = os.environ.get("STATEWAVE_API_KEY", "")
 
     print("=== Statewave default docs memory pack ===")
-    print(f"Subject:      {SUBJECT_ID}")
+    print(f"Subject:      {SUBJECT_ID}  (staging: {STAGING_SUBJECT_ID})")
     print(f"Pack version: v{PACK_VERSION}")
     print(f"Docs path:    {docs_path}")
     print(f"Server:       {server_url}")
@@ -253,45 +345,59 @@ async def run(docs_path: Path, purge: bool, dry_run: bool) -> None:
     async with httpx.AsyncClient(headers=headers, timeout=120.0) as client:
         await _health_check(client, server_url)
 
-        existing = await _existing_episode_count(client, server_url)
-        if existing > 0 and not purge:
+        live_existing = await _episode_count(client, server_url, SUBJECT_ID)
+        if live_existing > 0 and not purge:
             print(
-                f"\nERROR: subject {SUBJECT_ID!r} already has {existing} episodes.\n"
-                "       Re-run with --purge to wipe and rebuild.",
+                f"\nERROR: subject {SUBJECT_ID!r} already has {live_existing} "
+                "episodes.\n       Re-run with --purge to replace it.",
                 file=sys.stderr,
             )
             sys.exit(2)
 
-        if existing > 0 and purge:
-            print(f"Purging existing subject ({existing} episodes)...")
-            await _purge(client, server_url)
-        elif purge:
-            print("Subject is empty — proceeding with fresh ingest (no purge needed).")
+        # 1. Build into staging (never touch live yet).
+        print(f"\nBuilding staging pack {STAGING_SUBJECT_ID!r}...")
+        await _purge(client, server_url, STAGING_SUBJECT_ID)
+        print(f"Ingesting {len(sections)} episodes (batches of {BATCH_SIZE})...")
+        await _ingest_batched(client, server_url, sections, STAGING_SUBJECT_ID)
+        print("Compiling memories (async)...")
+        await _compile_async(client, server_url, STAGING_SUBJECT_ID)
 
-        print(f"\nIngesting {len(sections)} episodes (batches of {BATCH_SIZE})...")
-        await _ingest_batched(client, server_url, sections)
+        staging_mem = await _memory_count(client, server_url, STAGING_SUBJECT_ID)
+        print(f"  ✓ staging compiled {staging_mem} memories from {len(sections)} episodes")
 
-        print("\nCompiling memories...")
-        result = await _compile(client, server_url)
-        memories_created = result.get("memories_created", 0)
-        print(
-            f"  ✓ Compiled {memories_created} memories from {len(sections)} episodes"
-        )
-        # Guard against the silent-failure mode that produces hallucinated
-        # answers in the support widget: ingest reports success, compile
-        # returns 200, but no memories were extracted (e.g. compiler
-        # regression, payload-shape drift). Fail loudly here so CI catches
-        # it before the broken pack is left in production.
-        if len(sections) > 0 and memories_created == 0:
+        # 2. Verify staging BEFORE touching live. A zero-memory or failed
+        #    build (compiler regression, payload drift) aborts here and the
+        #    live pack is left exactly as it was.
+        if len(sections) > 0 and staging_mem == 0:
             print(
-                "\nERROR: compile returned 0 memories despite ingesting "
-                f"{len(sections)} episodes. The pack would answer poorly. "
-                "Refusing to leave production in this state.",
+                "\nERROR: staging compile returned 0 memories despite ingesting "
+                f"{len(sections)} episodes. Refusing to swap — the LIVE pack is "
+                "untouched.",
+                file=sys.stderr,
+            )
+            await _purge(client, server_url, STAGING_SUBJECT_ID)
+            sys.exit(1)
+
+        # 3. Swap staging -> live: export the validated staging pack, replace
+        #    live with it in one fast import (no compile in the window).
+        print(f"\nSwapping {STAGING_SUBJECT_ID!r} -> live {SUBJECT_ID!r}...")
+        document = await _export(client, server_url, STAGING_SUBJECT_ID)
+        await _purge(client, server_url, SUBJECT_ID)
+        result = await _import_into(client, server_url, document, SUBJECT_ID)
+        imported = result.get("memories_imported", 0)
+        print(f"  ✓ swapped {imported} memories into {SUBJECT_ID}")
+
+        # 4. Verify live, then drop staging.
+        live_mem = await _memory_count(client, server_url, SUBJECT_ID)
+        await _purge(client, server_url, STAGING_SUBJECT_ID)
+        if live_mem == 0:
+            print(
+                f"\nERROR: live subject {SUBJECT_ID!r} has 0 memories after swap.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-    print("\nDone. The default support docs pack is ready.")
+    print(f"\nDone. The default support docs pack is ready ({live_mem} memories).")
     print(f"Try: POST {server_url}/v1/context  with subject_id={SUBJECT_ID!r}")
 
 
@@ -306,7 +412,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--purge",
         action="store_true",
-        help="Delete existing episodes for the subject before ingesting",
+        help="Replace the live subject even if it already has episodes",
     )
     p.add_argument(
         "--dry-run",
