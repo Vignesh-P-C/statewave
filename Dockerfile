@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir ".[llm]"
 
 COPY . .
 
-RUN pip install --no-cache-dir ".[llm]" && chmod +x start.sh
+RUN chmod +x start.sh
 
 EXPOSE 8100
 
