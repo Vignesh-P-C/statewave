@@ -25,14 +25,11 @@ import argparse
 import asyncio
 import sys
 
-import structlog
 from sqlalchemy import select
 
 from server.db.engine import get_session_factory
 from server.db.tables import MemoryRow
 from server.services.entities import backfill_entities_for_subject
-
-logger = structlog.stdlib.get_logger()
 
 
 async def _subjects_for_bench(bench: str) -> list[str]:
