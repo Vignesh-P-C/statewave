@@ -16,6 +16,8 @@ while (( SECONDS < deadline )); do
     if [[ "$status" == "ready" ]]; then
       elapsed=$((SECONDS - start))
       echo "readyz: status=ready in ${elapsed}s"
+      # Defaults to /tmp (POSIX-only); override via STATEWAVE_COLD_TIMING_FILE
+      # when running outside CI/Docker or on non-POSIX shells.
       printf '%s\n' "$elapsed" > "${STATEWAVE_COLD_TIMING_FILE:-/tmp/statewave_cold_ready_seconds}"
       exit 0
     fi
