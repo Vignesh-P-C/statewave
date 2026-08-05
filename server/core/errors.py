@@ -7,6 +7,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -39,8 +40,6 @@ def _request_id(request: Request) -> str | None:
 
 
 def _error_json(code: str, message: str, request: Request, details: Any = None, status: int = 500):
-    from fastapi.responses import JSONResponse
-
     body = ErrorResponse(
         error=ErrorDetail(
             code=code,
