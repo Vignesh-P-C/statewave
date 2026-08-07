@@ -381,6 +381,23 @@ def http_request(
         return e.code, payload
 
 
+def _print_seed_banner() -> None:
+    """Print a note banner, auto-sizing the box to the longest line."""
+    lines = [
+        "NOTE: this seeds the MINIMAL statewave-web hero visualization",
+        "data (~10 episodes/persona) — NOT the full demo agents.",
+        "For full demo personas (~44 episodes) use the bundled packs:",
+        "  python -m scripts.bootstrap_demo_packs",
+        "(or admin UI → Import demo agent memories). A fresh server",
+        "auto-imports them on boot unless STATEWAVE_BOOTSTRAP_DEMO_PACKS=false",
+    ]
+    width = max(len(line) for line in lines)
+    border = "─" * (width + 2)
+    sys.stderr.write(f"\n  ┌{border}┐\n")
+    for line in lines:
+        sys.stderr.write(f"  │ {line:<{width}} │\n")
+    sys.stderr.write(f"  └{border}┘\n\n")
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default=DEFAULT_URL, help=f"Base API URL (default: {DEFAULT_URL})")
@@ -393,17 +410,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    sys.stderr.write(
-        "\n"
-        "  ┌──────────────────────────────────────────────────────────────────┐\n"
-        "  │  NOTE: this seeds the MINIMAL statewave-web hero visualization     │\n"
-        "  │  data (~10 episodes/persona) — NOT the full demo agents.           │\n"
-        "  │  For full demo personas (~44 episodes) use the bundled packs:      │\n"
-        "  │    python -m scripts.bootstrap_demo_packs                          │\n"
-        "  │  (or admin UI → Import demo agent memories). A fresh server         │\n"
-        "  │  auto-imports them on boot unless STATEWAVE_BOOTSTRAP_DEMO_PACKS=false│\n"
-        "  └──────────────────────────────────────────────────────────────────┘\n\n"
-    )
+    _print_seed_banner()
 
     if not API_KEY:
         print("ERROR: STATEWAVE_API_KEY env var required", file=sys.stderr)
