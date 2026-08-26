@@ -23,6 +23,27 @@ class EpisodeResponse(BaseModel):
     occurred_at: datetime
     created_at: datetime
 
+    @classmethod
+    def from_row(cls, row: Any) -> "EpisodeResponse":
+        """Build a response from an `EpisodeRow` ORM instance.
+
+        Single source of truth for the ORM->schema field mapping (#295) —
+        every router that returns an episode should call this instead of
+        re-listing the fields inline.
+        """
+        return cls(
+            id=row.id,
+            subject_id=row.subject_id,
+            source=row.source,
+            type=row.type,
+            payload=row.payload,
+            metadata=row.metadata_,
+            provenance=row.provenance,
+            session_id=row.session_id,
+            occurred_at=row.occurred_at,
+            created_at=row.created_at,
+        )
+
 
 class BatchCreateEpisodesResponse(BaseModel):
     episodes_created: int
@@ -50,6 +71,31 @@ class MemoryResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_row(cls, row: Any) -> "MemoryResponse":
+        """Build a response from a `MemoryRow` ORM instance.
+
+        Single source of truth for the ORM->schema field mapping (#295) —
+        every router that returns a memory should call this instead of
+        re-listing the fields inline.
+        """
+        return cls(
+            id=row.id,
+            subject_id=row.subject_id,
+            kind=row.kind,
+            content=row.content,
+            summary=row.summary,
+            confidence=row.confidence,
+            valid_from=row.valid_from,
+            valid_to=row.valid_to,
+            source_episode_ids=row.source_episode_ids or [],
+            metadata=row.metadata_,
+            status=row.status,
+            sensitivity_labels=list(getattr(row, "sensitivity_labels", None) or []),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
 
 
 class CompileMemoriesResponse(BaseModel):
@@ -152,6 +198,26 @@ class ResolutionResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+
+    @classmethod
+    def from_row(cls, row: Any) -> "ResolutionResponse":
+        """Build a response from a `ResolutionRow` ORM instance.
+
+        Single source of truth for the ORM->schema field mapping (#295) —
+        every router that returns a resolution should call this instead of
+        re-listing the fields inline.
+        """
+        return cls(
+            id=row.id,
+            subject_id=row.subject_id,
+            session_id=row.session_id,
+            status=row.status,
+            resolution_summary=row.resolution_summary,
+            resolved_at=row.resolved_at,
+            metadata=row.metadata_,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
 
 
 class ResolutionSummaryItem(BaseModel):

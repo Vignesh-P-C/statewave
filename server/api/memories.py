@@ -551,22 +551,9 @@ async def search_memories(
 
 
 def _to_response(row) -> MemoryResponse:
-    return MemoryResponse(
-        id=row.id,
-        subject_id=row.subject_id,
-        kind=row.kind,
-        content=row.content,
-        summary=row.summary,
-        confidence=row.confidence,
-        valid_from=row.valid_from,
-        valid_to=row.valid_to,
-        source_episode_ids=row.source_episode_ids or [],
-        metadata=row.metadata_,
-        status=row.status,
-        sensitivity_labels=list(getattr(row, "sensitivity_labels", None) or []),
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
+    # Thin delegate kept so the 6 existing call sites in this file don't need
+    # touching; the actual field mapping now lives in one place (#295).
+    return MemoryResponse.from_row(row)
 
 
 @router.patch("/{memory_id}/labels", response_model=MemoryResponse)
