@@ -54,18 +54,7 @@ async def create_episode(
         {"id": str(row.id), "subject_id": row.subject_id},
         tenant_id=tenant_id,
     )
-    return EpisodeResponse(
-        id=row.id,
-        subject_id=row.subject_id,
-        source=row.source,
-        type=row.type,
-        payload=row.payload,
-        metadata=row.metadata_,
-        provenance=row.provenance,
-        session_id=row.session_id,
-        occurred_at=row.occurred_at,
-        created_at=row.created_at,
-    )
+    return EpisodeResponse.from_row(row)
 
 
 @router.post(
@@ -113,19 +102,5 @@ async def create_episodes_batch(
         )
         return BatchCreateEpisodesResponse(
             episodes_created=len(rows),
-            episodes=[
-                EpisodeResponse(
-                    id=r.id,
-                    subject_id=r.subject_id,
-                    source=r.source,
-                    type=r.type,
-                    payload=r.payload,
-                    metadata=r.metadata_,
-                    provenance=r.provenance,
-                    session_id=r.session_id,
-                    occurred_at=r.occurred_at,
-                    created_at=r.created_at,
-                )
-                for r in rows
-            ],
+            episodes=[EpisodeResponse.from_row(r) for r in rows],
         )

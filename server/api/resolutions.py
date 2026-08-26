@@ -43,17 +43,7 @@ async def create_resolution(
     result = await repo.upsert_resolution(session, row)
     await session.commit()
 
-    return ResolutionResponse(
-        id=result.id,
-        subject_id=result.subject_id,
-        session_id=result.session_id,
-        status=result.status,
-        resolution_summary=result.resolution_summary,
-        resolved_at=result.resolved_at,
-        metadata=result.metadata_,
-        created_at=result.created_at,
-        updated_at=result.updated_at,
-    )
+    return ResolutionResponse.from_row(result)
 
 
 @router.get(
@@ -69,17 +59,4 @@ async def list_resolutions(
 ):
     """List resolution records for a subject, optionally filtered by status."""
     rows = await repo.list_resolutions(session, subject_id, tenant_id=tenant_id, status=status)
-    return [
-        ResolutionResponse(
-            id=r.id,
-            subject_id=r.subject_id,
-            session_id=r.session_id,
-            status=r.status,
-            resolution_summary=r.resolution_summary,
-            resolved_at=r.resolved_at,
-            metadata=r.metadata_,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-        )
-        for r in rows
-    ]
+    return [ResolutionResponse.from_row(r) for r in rows]

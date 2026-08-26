@@ -96,15 +96,4 @@ async def apply_memory_template(
         tenant_id=tenant_id,
     )
 
-    return EpisodeResponse(
-        id=row.id,
-        subject_id=row.subject_id,
-        source=row.source,
-        type=row.type,
-        payload=row.payload,
-        metadata=row.metadata_,
-        provenance=row.provenance,
-        session_id=row.session_id,
-        occurred_at=row.occurred_at,
-        created_at=row.created_at,
-    )
+    return EpisodeResponse.from_row(row)

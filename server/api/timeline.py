@@ -23,38 +23,6 @@ async def get_timeline(
     memories = await repo.list_memories_by_subject(session, subject_id, tenant_id=tenant_id)
     return TimelineResponse(
         subject_id=subject_id,
-        episodes=[
-            EpisodeResponse(
-                id=e.id,
-                subject_id=e.subject_id,
-                source=e.source,
-                type=e.type,
-                payload=e.payload,
-                metadata=e.metadata_,
-                provenance=e.provenance,
-                session_id=e.session_id,
-                occurred_at=e.occurred_at,
-                created_at=e.created_at,
-            )
-            for e in episodes
-        ],
-        memories=[
-            MemoryResponse(
-                id=m.id,
-                subject_id=m.subject_id,
-                kind=m.kind,
-                content=m.content,
-                summary=m.summary,
-                confidence=m.confidence,
-                valid_from=m.valid_from,
-                valid_to=m.valid_to,
-                source_episode_ids=m.source_episode_ids or [],
-                metadata=m.metadata_,
-                status=m.status,
-                sensitivity_labels=list(m.sensitivity_labels or []),
-                created_at=m.created_at,
-                updated_at=m.updated_at,
-            )
-            for m in memories
-        ],
+        episodes=[EpisodeResponse.from_row(e) for e in episodes],
+        memories=[MemoryResponse.from_row(m) for m in memories],
     )
