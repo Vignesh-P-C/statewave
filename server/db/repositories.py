@@ -871,13 +871,14 @@ async def list_resolutions(
     tenant_id: str | None = None,
     status: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> Sequence[ResolutionRow]:
     """List resolutions for a subject, optionally filtered by status."""
     stmt = select(ResolutionRow).where(ResolutionRow.subject_id == subject_id)
     stmt = _tenant_filter(stmt, ResolutionRow.tenant_id, tenant_id)
     if status:
         stmt = stmt.where(ResolutionRow.status == status)
-    stmt = stmt.order_by(ResolutionRow.updated_at.desc()).limit(limit)
+    stmt = stmt.order_by(ResolutionRow.updated_at.desc()).limit(limit).offset(offset)
     result = await session.execute(stmt)
     return result.scalars().all()
 

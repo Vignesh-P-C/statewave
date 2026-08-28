@@ -54,9 +54,13 @@ async def create_resolution(
 async def list_resolutions(
     subject_id: str = Query(..., min_length=1),
     status: str | None = Query(None, pattern=r"^(open|resolved|unresolved)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
     tenant_id: str | None = Depends(get_tenant_id),
 ):
     """List resolution records for a subject, optionally filtered by status."""
-    rows = await repo.list_resolutions(session, subject_id, tenant_id=tenant_id, status=status)
+    rows = await repo.list_resolutions(
+        session, subject_id, tenant_id=tenant_id, status=status, limit=limit, offset=offset
+    )
     return [ResolutionResponse.from_row(r) for r in rows]
