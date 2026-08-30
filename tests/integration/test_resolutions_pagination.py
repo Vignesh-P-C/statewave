@@ -88,3 +88,36 @@ async def test_offset_skips_the_correct_number_of_rows(session_factory, subject_
     assert len(first_page) == 2
     assert len(second_page) == 1
     assert {r.id for r in first_page}.isdisjoint({r.id for r in second_page})
+
+@pytest.mark.anyio
+async def test_route_exposes_limit_and_offset(client, subject_id):
+    """The #332 fix is the route wiring, so exercise GET /v1/resolutions itself."""
+    for i in range(3):
+        resp = await client.post(
+            "/v1/resolutions",
+            json={
+                "subject_id": subject_id,
+                "session_id": f"sess-page-{i}",
+                "status": "resolved",
+                "resolution_summary": f"resolution {i}",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+    first = await client.get(
+        "/v1/resolutions", params={"subject_id": subject_id, "limit": 2, "offset": 0}
+    )
+    assert first.status_code == 200, first.text
+    assert len(first.json()) == 2
+
+    second = await client.get(
+        "/v1/resolutions", params={"subject_id": subject_id, "limit": 2, "offset": 2}
+    )
+    assert second.status_code == 200, second.text
+    assert len(second.json()) == 1
+
+    seen = {r["session_id"] for r in first.json()} | {r["session_id"] for r in second.json()}
+    assert seen == {"sess-page-0", "sess-page-1", "sess-page-2"}
+
+    bad = await client.get("/v1/resolutions", params={"subject_id": subject_id, "limit": 0})
+    assert bad.status_code == 422

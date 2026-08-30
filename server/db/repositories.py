@@ -878,7 +878,13 @@ async def list_resolutions(
     stmt = _tenant_filter(stmt, ResolutionRow.tenant_id, tenant_id)
     if status:
         stmt = stmt.where(ResolutionRow.status == status)
-    stmt = stmt.order_by(ResolutionRow.updated_at.desc()).limit(limit).offset(offset)
+    # `id` breaks ties between rows sharing an updated_at (bulk writes in one
+    # transaction share a single now()), so OFFSET pages never skip or repeat rows.
+    stmt = (
+        stmt.order_by(ResolutionRow.updated_at.desc(), ResolutionRow.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     result = await session.execute(stmt)
     return result.scalars().all()
 
